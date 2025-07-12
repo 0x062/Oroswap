@@ -34,12 +34,12 @@ const config = {
         autoStakeAfterAddLp: true,
         smart: {
             ORO_ZIG: {
-                minBalance: 0.01, // Minimum ORO untuk mencoba LP di pool ini
+                minBalance: 0.001, // Minimum ORO untuk mencoba LP di pool ini
                 lpPercentToUse: { min: 50, max: 90 }
             },
             ZIG_BEE: {
-                minBalance: 0.0001, // Minimum BEE untuk mencoba LP di pool ini
-                lpPercentToUse: { min: 50, max: 90 }
+                minBalance: 0.000001, // Minimum BEE untuk mencoba LP di pool ini
+                lpPercentToUse: { min: 15, max: 58 }
             }
         }
     }
