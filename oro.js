@@ -15,7 +15,7 @@ const SEED_PHRASE = process.env.SEED_PHRASE;
 
 const config = {
     swap: {
-        repetitions: 2,
+        repetitions: 4,
         delayBetweenActions: { min: 10, max: 50 },
         randomAmountRanges: {
             ZIG_ORO: { 
@@ -30,7 +30,7 @@ const config = {
     },
     // ✅ PENGATURAN ADD LP BARU DENGAN PENGATURAN PER-POOL
     addLp: {
-        repetitions: 4,
+        repetitions: 10,
         autoStakeAfterAddLp: true,
         smart: {
             ORO_ZIG: {
