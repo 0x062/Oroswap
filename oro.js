@@ -17,10 +17,10 @@ const config = {
     addLpRepetitions: 1,
     delayBetweenActions: { min: 5, max: 10 },
     randomAmountRanges: {
-        ZIG_ORO: { ZIG: { min: 0.001, max: 0.002 } },
+        ZIG_ORO: { ZIG: { min: 0.5, max: 1 } },
         ZIG_BEE: { ZIG: { min: 1.0, max: 1.5 } },
     },
-    addLpOroRange: { min: 0.5, max: 1.0 },
+    addLpOroRange: { min: 0.2, max: 1.0 },
 };
 // ===================================================================================
 // 🛑 JANGAN UBAH APAPUN DI BAWAH GARIS INI 🛑
