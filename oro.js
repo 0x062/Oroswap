@@ -20,7 +20,7 @@ const config = {
     // ✅ Berapa kali ingin Add LP (menggunakan logika Smart)
     addLpRepetitions: 2, 
     
-    delayBetweenActions: { min: 10, max: 20 },
+    delayBetweenActions: { min: 10, max: 50 },
     
     randomAmountRanges: {
         ZIG_ORO: { 
