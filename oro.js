@@ -25,8 +25,8 @@ const config = {
     addLpRepetitions: 1,
     delayBetweenActions: { min: 5, max: 10 },
     randomAmountRanges: {
-        ZIG_ORO: { ZIG: { min: 0.001, max: 0.002 } },
-        ZIG_BEE: { ZIG: { min: 1.0, max: 1.5 } },
+        ZIG_ORO: { ZIG: { min: 0.1, max: 0.5 } },
+        ZIG_BEE: { ZIG: { min: 0.01, max: 0.1 } },
     },
     smartAddLp: {
         minOroBalanceForLp: 0.1, 
