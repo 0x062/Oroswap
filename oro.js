@@ -18,7 +18,7 @@ const config = {
     swapRepetitions: 4, 
     
     // ✅ Berapa kali ingin Add LP (menggunakan logika Smart)
-    addLpRepetitions: 2, 
+    addLpRepetitions: 5, 
     
     delayBetweenActions: { min: 10, max: 50 },
     
