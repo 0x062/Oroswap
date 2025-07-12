@@ -1,0 +1,19 @@
+{
+  "name": "oroswap-auto-bot",
+  "version": "1.0.0",
+  "description": "Bot otomatis untuk melakukan swap dan add liquidity di OroSwap Testnet.",
+  "main": "oroswap-bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node oro.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@cosmjs/cosmwasm-stargate": "^0.32.3",
+    "@cosmjs/proto-signing": "^0.32.3",
+    "@cosmjs/stargate": "^0.32.3",
+    "axios": "^1.7.2",
+    "chalk": "^5.3.0"
+  }
+}
