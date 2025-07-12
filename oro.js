@@ -199,8 +199,11 @@ async function autoSwap(client, address, pair) {
     const contract = pair === "ZIG_ORO" ? ORO_ZIG_CONTRACT : ZIG_BEE_CONTRACT;
     const fromDenom = pair === "ZIG_ORO" ? (lastSwapDirectionZigOro === "ZIG_TO_ORO" ? DENOM_ZIG : DENOM_ORO) : (lastSwapDirectionZigBee === "ZIG_TO_BEE" ? DENOM_ZIG : DENOM_BEE);
     const toDenom = pair === "ZIG_ORO" ? (lastSwapDirectionZigOro === "ZIG_TO_ORO" ? DENOM_ORO : DENOM_ZIG) : (lastSwapDirectionZigBee === "ZIG_TO_BEE" ? DENOM_BEE : DENOM_ZIG);
-    const fromSymbol = fromDenom.includes("uzig") ? "ZIG" : (fromDenom.includes("uoro") ? "ORO" : "BEE");
     
+    // ✅ PERBAIKAN: Mendefinisikan fromSymbol dan toSymbol dengan benar
+    const fromSymbol = fromDenom === DENOM_ZIG ? "ZIG" : fromDenom === DENOM_ORO ? "ORO" : "BEE";
+    const toSymbol = toDenom === DENOM_ZIG ? "ZIG" : toDenom === DENOM_ORO ? "ORO" : "BEE";
+
     const amount = (Math.random() * (ranges[fromSymbol].max - ranges[fromSymbol].min) + ranges[fromSymbol].min).toFixed(4);
     const balance = await getBalance(client, address, fromDenom);
 
@@ -273,8 +276,9 @@ async function startBot() {
             await sleep(delayMs);
         } catch (error) {
             addLog(`Terjadi error pada siklus utama: ${error.message}`, "error");
-            addLog("Mencoba lagi setelah 1 jam...", "wait");
-            await sleep(1 * 60 * 60 * 1000);
+            // ✅ PERBAIKAN: Waktu tunggu diubah menjadi 15 detik
+            addLog("Mencoba lagi setelah 15 detik...", "wait");
+            await sleep(15 * 1000); 
         }
     }
 }
