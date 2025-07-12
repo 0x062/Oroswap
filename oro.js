@@ -13,14 +13,19 @@ dotenv.config({ quiet: true });
 const SEED_PHRASE = process.env.SEED_PHRASE;
 
 const config = {
-    // ✅ JUMLAH ADD LIQUIDITY SETELAH SEMUA SWAP SELESAI
     addLpRepetitions: 1,
     delayBetweenActions: { min: 5, max: 10 },
     randomAmountRanges: {
-        ZIG_ORO: { ZIG: { min: 0.5, max: 1 } },
+        ZIG_ORO: { ZIG: { min: 0.001, max: 0.002 } },
         ZIG_BEE: { ZIG: { min: 1.0, max: 1.5 } },
     },
-    addLpOroRange: { min: 0.2, max: 1.0 },
+    // ✅ PENGATURAN BARU UNTUK SMART ADD LP
+    smartAddLp: {
+        // Minimum saldo ORO untuk mencoba Add LP
+        minOroBalanceForLp: 0.1, 
+        // Persentase saldo ORO yang akan digunakan (misal: 50% s/d 90%)
+        lpPercentToUse: { min: 50, max: 90 },
+    }
 };
 // ===================================================================================
 // 🛑 JANGAN UBAH APAPUN DI BAWAH GARIS INI 🛑
@@ -86,50 +91,27 @@ async function getPoolInfo(client, contractAddress) {
     }
 }
 
-// ✅ PERBAIKAN: Logika perhitungan harga disesuaikan per pair untuk akurasi
 function calculateBeliefPrice(poolInfo, contractAddress) {
-    if (!poolInfo?.assets || poolInfo.assets.length !== 2) {
-        throw new Error("Data pool tidak valid untuk menghitung harga.");
-    }
-    const asset1 = poolInfo.assets[0];
-    const asset2 = poolInfo.assets[1];
-    
+    if (!poolInfo?.assets || poolInfo.assets.length !== 2) throw new Error("Data pool tidak valid untuk menghitung harga.");
     const assetZIG = poolInfo.assets.find(a => a.info.native_token.denom === DENOM_ZIG);
     const otherAsset = poolInfo.assets.find(a => a.info.native_token.denom !== DENOM_ZIG);
-
     const zigAmount = parseInt(assetZIG.amount);
     const otherAmount = parseInt(otherAsset.amount);
 
-    if (contractAddress === ZIG_BEE_CONTRACT) {
-        // Untuk pair ZIG-BEE, harga adalah ZIG per BEE
-        return (zigAmount / otherAmount).toFixed(18);
-    } else {
-        // Untuk pair ZIG-ORO, harga adalah ORO per ZIG
-        return (otherAmount / zigAmount).toFixed(18);
-    }
+    if (contractAddress === ZIG_BEE_CONTRACT) return (zigAmount / otherAmount).toFixed(18);
+    else return (otherAmount / zigAmount).toFixed(18);
 }
 
 async function performSwap(client, address, fromDenom, toDenom, amount, contractAddress) {
     try {
         const poolInfo = await getPoolInfo(client, contractAddress);
-        // Pass contractAddress untuk perhitungan harga yang benar
         const beliefPrice = calculateBeliefPrice(poolInfo, contractAddress);
         addLog(`Harga pool saat ini (belief_price): ${beliefPrice}`, "info");
-
         const microAmount = toMicroUnits(amount, fromDenom);
         const fromSymbol = fromDenom === DENOM_ZIG ? "ZIG" : fromDenom === DENOM_ORO ? "ORO" : "BEE";
         const toSymbol = toDenom === DENOM_ZIG ? "ZIG" : toDenom === DENOM_ORO ? "ORO" : "BEE";
-
         addLog(`Mencoba swap: ${amount} ${fromSymbol} ➯ ${toSymbol}`, "swap");
-
-        const msg = {
-            swap: {
-                belief_price: beliefPrice,
-                max_spread: "0.5", // Toleransi 50% spread
-                offer_asset: { amount: microAmount.toString(), info: { native_token: { denom: fromDenom } } },
-            },
-        };
-
+        const msg = { swap: { belief_price: beliefPrice, max_spread: "0.5", offer_asset: { amount: microAmount.toString(), info: { native_token: { denom: fromDenom } } } } };
         const funds = coins(microAmount, fromDenom);
         const result = await client.execute(address, contractAddress, msg, "auto", `Swap ${fromSymbol} to ${toSymbol}`, funds);
         addLog(`Swap berhasil! Tx: ${result.transactionHash}`, "success");
@@ -142,29 +124,20 @@ async function performSwap(client, address, fromDenom, toDenom, amount, contract
 
 async function addLiquidityOroZig(client, address, oroAmount) {
     try {
-        const oroBalance = await getBalance(client, address, DENOM_ORO);
-        if (oroBalance < oroAmount) {
-             addLog(`Saldo ORO tidak cukup untuk Add LP (${oroBalance.toFixed(4)} < ${oroAmount}). Melewatkan.`, "error");
-             return;
-        }
-
         const poolInfo = await getPoolInfo(client, ORO_ZIG_CONTRACT);
         if (!poolInfo) return null;
-
         const ratio = parseInt(poolInfo.assets.find(a => a.info.native_token.denom === DENOM_ZIG).amount) / parseInt(poolInfo.assets.find(a => a.info.native_token.denom === DENOM_ORO).amount);
         const oroMicro = toMicroUnits(oroAmount, DENOM_ORO);
         const zigMicroNeeded = Math.floor(oroMicro * ratio);
         const zigNeeded = zigMicroNeeded / 10 ** TOKEN_DECIMALS.uzig;
-
-        addLog(`Mencoba Add LP: ${oroAmount} ORO dan ~${zigNeeded.toFixed(6)} ZIG`, "info");
+        addLog(`Mencoba Add LP: ${oroAmount.toFixed(6)} ORO dan ~${zigNeeded.toFixed(6)} ZIG`, "info");
         const balanceZIG = await getBalance(client, address, DENOM_ZIG);
         if (balanceZIG < zigNeeded) {
             addLog(`Saldo ZIG tidak cukup untuk Add LP. Butuh: ${zigNeeded.toFixed(6)}, Saldo: ${balanceZIG.toFixed(6)}`, "error");
             return null;
         }
-        
-        const msg = { provide_liquidity: { assets: [ { amount: oroMicro.toString(), info: { native_token: { denom: DENOM_ORO } } }, { amount: zigMicroNeeded.toString(), info: { native_token: { denom: DENOM_ZIG } } }, ], auto_stake: false, slippage_tolerance: "0.5" } };
-        const funds = [ { denom: DENOM_ORO, amount: oroMicro.toString() }, { denom: DENOM_ZIG, amount: zigMicroNeeded.toString() } ];
+        const msg = { provide_liquidity: { assets: [{ amount: oroMicro.toString(), info: { native_token: { denom: DENOM_ORO } } }, { amount: zigMicroNeeded.toString(), info: { native_token: { denom: DENOM_ZIG } } }], auto_stake: false, slippage_tolerance: "0.5" } };
+        const funds = [{ denom: DENOM_ORO, amount: oroMicro.toString() }, { denom: DENOM_ZIG, amount: zigMicroNeeded.toString() }];
         const result = await client.execute(address, ORO_ZIG_CONTRACT, msg, "auto", "Add Liquidity ORO-ZIG", funds);
         addLog(`Add LP berhasil! Tx: ${result.transactionHash}`, "success");
     } catch (error) {
@@ -172,18 +145,14 @@ async function addLiquidityOroZig(client, address, oroAmount) {
     }
 }
 
-// ✅ PERBAIKAN: Fungsi baru yang hanya melakukan swap dari ZIG ke token lain
 async function performZigToTokenSwap(client, address, pair) {
     const ranges = config.randomAmountRanges[pair];
     const contract = pair === "ZIG_ORO" ? ORO_ZIG_CONTRACT : ZIG_BEE_CONTRACT;
     const toDenom = pair === "ZIG_ORO" ? DENOM_ORO : DENOM_BEE;
     const toSymbol = pair === "ZIG_ORO" ? "ORO" : "BEE";
-
     const zigAmountToSwap = (Math.random() * (ranges.ZIG.max - ranges.ZIG.min) + ranges.ZIG.min).toFixed(4);
     const zigBalance = await getBalance(client, address, DENOM_ZIG);
-
     addLog(`Mengecek swap ZIG -> ${toSymbol}. Butuh: ${zigAmountToSwap}, Saldo: ${zigBalance.toFixed(4)}`, "info");
-
     if (zigBalance >= zigAmountToSwap) {
         await performSwap(client, address, DENOM_ZIG, toDenom, zigAmountToSwap, contract);
     } else {
@@ -193,39 +162,35 @@ async function performZigToTokenSwap(client, address, pair) {
 
 async function runCycle(client, address) {
     addLog(`Memulai siklus untuk wallet: ${getShortAddress(address)}`, "info");
-
-    // ✅ PERBAIKAN: Swap ZIG ke ORO terlebih dahulu
     addLog("--- Tahap 1: Swap ZIG ke ORO ---", "info");
     await performZigToTokenSwap(client, address, "ZIG_ORO");
     let delay = getRandomDelay();
     addLog(`Menunggu ${delay / 1000} detik...`, "wait");
     await sleep(delay);
-
-    // ✅ PERBAIKAN: Swap ZIG ke BEE
     addLog("--- Tahap 2: Swap ZIG ke BEE ---", "info");
     await performZigToTokenSwap(client, address, "ZIG_BEE");
 
-    // --- Tahap Add Liquidity ---
     if (config.addLpRepetitions > 0) {
         delay = getRandomDelay();
         addLog(`Menunggu ${delay / 1000} detik sebelum Add LP...`, "wait");
         await sleep(delay);
         
-        for (let i = 0; i < config.addLpRepetitions; i++) {
-            addLog(`--- Tahap 3: Add LP ke-${i + 1} dari ${config.addLpRepetitions} ---`, "info");
-            const oroAmount = (Math.random() * (config.addLpOroRange.max - config.addLpOroRange.min) + config.addLpOroRange.min).toFixed(6);
-            await addLiquidityOroZig(client, address, oroAmount);
-    
-            if (i < config.addLpRepetitions - 1) {
-                delay = getRandomDelay();
-                addLog(`Menunggu ${delay / 1000} detik...`, "wait");
-                await sleep(delay);
-            }
+        // ✅ PERBAIKAN: Logika Smart Add LP
+        addLog(`--- Tahap 3: Smart Add Liquidity ---`, "info");
+        const oroBalance = await getBalance(client, address, DENOM_ORO);
+        addLog(`Mengecek saldo ORO untuk Add LP. Saldo saat ini: ${oroBalance.toFixed(4)} ORO`, "info");
+
+        if (oroBalance >= config.smartAddLp.minOroBalanceForLp) {
+            const percent = (Math.random() * (config.smartAddLp.lpPercentToUse.max - config.smartAddLp.lpPercentToUse.min) + config.smartAddLp.lpPercentToUse.min) / 100;
+            const oroAmountToLp = oroBalance * percent;
+            addLog(`Saldo ORO mencukupi. Akan menggunakan ${Math.round(percent*100)}% dari saldo, yaitu ${oroAmountToLp.toFixed(6)} ORO untuk Add LP.`, "info");
+            await addLiquidityOroZig(client, address, oroAmountToLp);
+        } else {
+            addLog(`Saldo ORO (${oroBalance.toFixed(4)}) di bawah ambang batas minimum (${config.smartAddLp.minOroBalanceForLp}). Melewatkan Add LP.`, "wait");
         }
     }
 }
 
-// ✅ PERBAIKAN: Menghapus loop `while(true)`
 async function startBot() {
     addLog("🤖 OROSWAP AUTO BOT DIMULAI 🤖", "success");
     try {
@@ -234,10 +199,10 @@ async function startBot() {
         await runCycle(client, address);
         addLog("✅ Semua tugas telah selesai. Bot akan berhenti.", "success");
         console.log(chalk.blueBright("===================================================="));
-        process.exit(0); // Keluar dengan sukses
+        process.exit(0);
     } catch (error) {
         addLog(`Terjadi error fatal: ${error.message}`, "error");
-        process.exit(1); // Keluar dengan kode error
+        process.exit(1);
     }
 }
 
