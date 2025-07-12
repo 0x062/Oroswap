@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import dotenv from 'dotenv';
 import fs from "fs";
 import axios from "axios";
 import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
