@@ -13,17 +13,25 @@ dotenv.config({ quiet: true });
 const SEED_PHRASE = process.env.SEED_PHRASE;
 
 const config = {
-    addLpRepetitions: 1,
-    delayBetweenActions: { min: 5, max: 10 },
+    // ✅ Tentukan total swap acak yang ingin dilakukan
+    swapRepetitions: 4, 
+    // ✅ Tentukan berapa kali ingin Add LP
+    addLpRepetitions: 2, 
+    
+    delayBetweenActions: { min: 10, max: 20 },
+    
     randomAmountRanges: {
-        ZIG_ORO: { ZIG: { min: 0.001, max: 0.002 } },
-        ZIG_BEE: { ZIG: { min: 1.0, max: 1.5 } },
+        ZIG_ORO: { 
+            ZIG: { min: 0.1, max: 0.5 },
+            ORO: { min: 0.1, max: 0.3 } 
+        },
+        ZIG_BEE: { 
+            ZIG: { min: 0.1, max: 0.5 },
+            BEE: { min: 0.001, max: 0.002 }
+        },
     },
-    // ✅ PENGATURAN BARU UNTUK SMART ADD LP
     smartAddLp: {
-        // Minimum saldo ORO untuk mencoba Add LP
         minOroBalanceForLp: 0.1, 
-        // Persentase saldo ORO yang akan digunakan (misal: 50% s/d 90%)
         lpPercentToUse: { min: 50, max: 90 },
     }
 };
@@ -92,12 +100,11 @@ async function getPoolInfo(client, contractAddress) {
 }
 
 function calculateBeliefPrice(poolInfo, contractAddress) {
-    if (!poolInfo?.assets || poolInfo.assets.length !== 2) throw new Error("Data pool tidak valid untuk menghitung harga.");
+    if (!poolInfo?.assets || poolInfo.assets.length !== 2) throw new Error("Data pool tidak valid.");
     const assetZIG = poolInfo.assets.find(a => a.info.native_token.denom === DENOM_ZIG);
     const otherAsset = poolInfo.assets.find(a => a.info.native_token.denom !== DENOM_ZIG);
     const zigAmount = parseInt(assetZIG.amount);
     const otherAmount = parseInt(otherAsset.amount);
-
     if (contractAddress === ZIG_BEE_CONTRACT) return (zigAmount / otherAmount).toFixed(18);
     else return (otherAmount / zigAmount).toFixed(18);
 }
@@ -145,48 +152,76 @@ async function addLiquidityOroZig(client, address, oroAmount) {
     }
 }
 
-async function performZigToTokenSwap(client, address, pair) {
+// ✅ FUNGSI INI DIKEMBALIKAN untuk menangani swap bolak-balik secara cerdas
+async function autoSwap(client, address, pair) {
     const ranges = config.randomAmountRanges[pair];
     const contract = pair === "ZIG_ORO" ? ORO_ZIG_CONTRACT : ZIG_BEE_CONTRACT;
-    const toDenom = pair === "ZIG_ORO" ? DENOM_ORO : DENOM_BEE;
-    const toSymbol = pair === "ZIG_ORO" ? "ORO" : "BEE";
+    const otherTokenDenom = pair === "ZIG_ORO" ? DENOM_ORO : DENOM_BEE;
+    const otherTokenSymbol = pair === "ZIG_ORO" ? "ORO" : "BEE";
+
+    // Prioritas 1: Coba swap ZIG -> Token Lain
     const zigAmountToSwap = (Math.random() * (ranges.ZIG.max - ranges.ZIG.min) + ranges.ZIG.min).toFixed(4);
     const zigBalance = await getBalance(client, address, DENOM_ZIG);
-    addLog(`Mengecek swap ZIG -> ${toSymbol}. Butuh: ${zigAmountToSwap}, Saldo: ${zigBalance.toFixed(4)}`, "info");
+    addLog(`Mengecek swap ZIG -> ${otherTokenSymbol}. Butuh: ${zigAmountToSwap}, Saldo: ${zigBalance.toFixed(4)}`, "info");
+
     if (zigBalance >= zigAmountToSwap) {
-        await performSwap(client, address, DENOM_ZIG, toDenom, zigAmountToSwap, contract);
+        await performSwap(client, address, DENOM_ZIG, otherTokenDenom, zigAmountToSwap, contract);
+        return; 
+    }
+    
+    // Prioritas 2: Jika ZIG tidak cukup, coba Token Lain -> ZIG
+    addLog(`Saldo ZIG tidak cukup. Mencoba arah sebaliknya.`, "wait");
+    const otherTokenAmountToSwap = (Math.random() * (ranges[otherTokenSymbol].max - ranges[otherTokenSymbol].min) + ranges[otherTokenSymbol].min).toFixed(4);
+    const otherTokenBalance = await getBalance(client, address, otherTokenDenom);
+    addLog(`Mengecek swap ${otherTokenSymbol} -> ZIG. Butuh: ${otherTokenAmountToSwap}, Saldo: ${otherTokenBalance.toFixed(4)}`, "info");
+
+    if (otherTokenBalance >= otherTokenAmountToSwap) {
+        await performSwap(client, address, otherTokenDenom, DENOM_ZIG, otherTokenAmountToSwap, contract);
     } else {
-        addLog(`Saldo ZIG tidak cukup untuk swap ke ${toSymbol}. Melewatkan.`, "error");
+        addLog(`Saldo juga tidak cukup untuk swap ${otherTokenSymbol} -> ZIG. Melewatkan.`, "error");
     }
 }
 
+// ✅ LOGIKA SIKLUS diubah menjadi acak
 async function runCycle(client, address) {
     addLog(`Memulai siklus untuk wallet: ${getShortAddress(address)}`, "info");
-    addLog("--- Tahap 1: Swap ZIG ke ORO ---", "info");
-    await performZigToTokenSwap(client, address, "ZIG_ORO");
-    let delay = getRandomDelay();
-    addLog(`Menunggu ${delay / 1000} detik...`, "wait");
-    await sleep(delay);
-    addLog("--- Tahap 2: Swap ZIG ke BEE ---", "info");
-    await performZigToTokenSwap(client, address, "ZIG_BEE");
+    
+    // Tahap 1: Melakukan Swap Acak Bolak-Balik
+    addLog(`--- Tahap 1: Melakukan ${config.swapRepetitions} Swap Acak ---`, "info");
+    for (let i = 0; i < config.swapRepetitions; i++) {
+        addLog(`--- Swap Acak ke-${i + 1} dari ${config.swapRepetitions} ---`, "info");
+        const pair = Math.random() < 0.5 ? "ZIG_ORO" : "ZIG_BEE";
+        await autoSwap(client, address, pair);
 
+        if (i < config.swapRepetitions - 1 || config.addLpRepetitions > 0) {
+            const delay = getRandomDelay();
+            addLog(`Menunggu ${delay / 1000} detik...`, "wait");
+            await sleep(delay);
+        }
+    }
+
+    // Tahap 2: Smart Add Liquidity
     if (config.addLpRepetitions > 0) {
-        delay = getRandomDelay();
-        addLog(`Menunggu ${delay / 1000} detik sebelum Add LP...`, "wait");
-        await sleep(delay);
-        
-        // ✅ PERBAIKAN: Logika Smart Add LP
-        addLog(`--- Tahap 3: Smart Add Liquidity ---`, "info");
-        const oroBalance = await getBalance(client, address, DENOM_ORO);
-        addLog(`Mengecek saldo ORO untuk Add LP. Saldo saat ini: ${oroBalance.toFixed(4)} ORO`, "info");
+        addLog(`--- Tahap 2: Melakukan ${config.addLpRepetitions} Smart Add Liquidity ---`, "info");
+        for (let i = 0; i < config.addLpRepetitions; i++) {
+            addLog(`--- Add LP ke-${i + 1} dari ${config.addLpRepetitions} ---`, "info");
+            const oroBalance = await getBalance(client, address, DENOM_ORO);
+            addLog(`Mengecek saldo ORO. Saldo saat ini: ${oroBalance.toFixed(4)} ORO`, "info");
 
-        if (oroBalance >= config.smartAddLp.minOroBalanceForLp) {
-            const percent = (Math.random() * (config.smartAddLp.lpPercentToUse.max - config.smartAddLp.lpPercentToUse.min) + config.smartAddLp.lpPercentToUse.min) / 100;
-            const oroAmountToLp = oroBalance * percent;
-            addLog(`Saldo ORO mencukupi. Akan menggunakan ${Math.round(percent*100)}% dari saldo, yaitu ${oroAmountToLp.toFixed(6)} ORO untuk Add LP.`, "info");
-            await addLiquidityOroZig(client, address, oroAmountToLp);
-        } else {
-            addLog(`Saldo ORO (${oroBalance.toFixed(4)}) di bawah ambang batas minimum (${config.smartAddLp.minOroBalanceForLp}). Melewatkan Add LP.`, "wait");
+            if (oroBalance >= config.smartAddLp.minOroBalanceForLp) {
+                const percent = (Math.random() * (config.smartAddLp.lpPercentToUse.max - config.smartAddLp.lpPercentToUse.min) + config.smartAddLp.lpPercentToUse.min) / 100;
+                const oroAmountToLp = oroBalance * percent;
+                addLog(`Saldo ORO mencukupi. Akan menggunakan ${Math.round(percent*100)}% dari saldo untuk Add LP.`, "info");
+                await addLiquidityOroZig(client, address, oroAmountToLp);
+            } else {
+                addLog(`Saldo ORO (${oroBalance.toFixed(4)}) di bawah ambang batas minimum (${config.smartAddLp.minOroBalanceForLp}). Melewatkan Add LP.`, "wait");
+            }
+
+            if (i < config.addLpRepetitions - 1) {
+                const delay = getRandomDelay();
+                addLog(`Menunggu ${delay / 1000} detik...`, "wait");
+                await sleep(delay);
+            }
         }
     }
 }
