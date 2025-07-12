@@ -5,8 +5,8 @@ import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
 import { GasPrice, coins } from "@cosmjs/stargate";
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 
-// Memuat environment variables dari file .env
-dotenv.config();
+// ✅ PERBAIKAN: Menambahkan { quiet: true } untuk menghilangkan log dotenv
+dotenv.config({ quiet: true });
 
 // ===================================================================================
 // ⚙️ PENGATURAN UTAMA - HANYA EDIT BAGIAN INI ⚙️
@@ -66,10 +66,6 @@ const TOKEN_DECIMALS = {
     "coin.zig10rfjm85jmzfhravjwpq3hcdz8ngxg7lxd0drkr.uoro": 6,
     "coin.zig1ptxpjgl3lsxrq99zl6ad2nmrx4lhnhne26m6ys.bee": 6,
 };
-
-// --- VARIABEL GLOBAL ---
-let lastSwapDirectionZigOro = "ORO_TO_ZIG";
-let lastSwapDirectionZigBee = "BEE_TO_ZIG";
 
 // --- FUNGSI UTILITAS ---
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -177,12 +173,10 @@ async function addLiquidityOroZig(client, address, oroAmount) {
                 slippage_tolerance: "0.5",
             },
         };
-
         const funds = [
             { denom: DENOM_ORO, amount: oroMicro.toString() },
             { denom: DENOM_ZIG, amount: zigMicroNeeded.toString() },
         ];
-
         const result = await client.execute(address, ORO_ZIG_CONTRACT, msg, "auto", "Add Liquidity ORO-ZIG", funds);
         addLog(`Add LP berhasil! Tx: ${result.transactionHash}`, "success");
         return result;
@@ -197,24 +191,32 @@ async function addLiquidityOroZig(client, address, oroAmount) {
 async function autoSwap(client, address, pair) {
     const ranges = config.randomAmountRanges[pair];
     const contract = pair === "ZIG_ORO" ? ORO_ZIG_CONTRACT : ZIG_BEE_CONTRACT;
-    const fromDenom = pair === "ZIG_ORO" ? (lastSwapDirectionZigOro === "ZIG_TO_ORO" ? DENOM_ZIG : DENOM_ORO) : (lastSwapDirectionZigBee === "ZIG_TO_BEE" ? DENOM_ZIG : DENOM_BEE);
-    const toDenom = pair === "ZIG_ORO" ? (lastSwapDirectionZigOro === "ZIG_TO_ORO" ? DENOM_ORO : DENOM_ZIG) : (lastSwapDirectionZigBee === "ZIG_TO_BEE" ? DENOM_BEE : DENOM_ZIG);
+    const otherTokenDenom = pair === "ZIG_ORO" ? DENOM_ORO : DENOM_BEE;
+    const otherTokenSymbol = pair === "ZIG_ORO" ? "ORO" : "BEE";
+
+    // ✅ PERBAIKAN: Langkah 1 - Selalu coba swap dari ZIG terlebih dahulu
+    const zigAmountToSwap = (Math.random() * (ranges.ZIG.max - ranges.ZIG.min) + ranges.ZIG.min).toFixed(4);
+    const zigBalance = await getBalance(client, address, DENOM_ZIG);
+
+    addLog(`Mengecek swap ZIG -> ${otherTokenSymbol}. Butuh: ${zigAmountToSwap}, Saldo: ${zigBalance.toFixed(4)}`, "info");
+
+    if (zigBalance >= zigAmountToSwap) {
+        await performSwap(client, address, DENOM_ZIG, otherTokenDenom, zigAmountToSwap, contract);
+        return; // Keluar dari fungsi jika swap berhasil
+    }
     
-    // ✅ PERBAIKAN: Mendefinisikan fromSymbol dan toSymbol dengan benar
-    const fromSymbol = fromDenom === DENOM_ZIG ? "ZIG" : fromDenom === DENOM_ORO ? "ORO" : "BEE";
-    const toSymbol = toDenom === DENOM_ZIG ? "ZIG" : toDenom === DENOM_ORO ? "ORO" : "BEE";
+    // ✅ PERBAIKAN: Langkah 2 - Jika ZIG tidak cukup, coba swap dari token lain
+    addLog(`Saldo ZIG tidak cukup. Mencoba arah sebaliknya.`, "wait");
 
-    const amount = (Math.random() * (ranges[fromSymbol].max - ranges[fromSymbol].min) + ranges[fromSymbol].min).toFixed(4);
-    const balance = await getBalance(client, address, fromDenom);
+    const otherTokenAmountToSwap = (Math.random() * (ranges[otherTokenSymbol].max - ranges[otherTokenSymbol].min) + ranges[otherTokenSymbol].min).toFixed(4);
+    const otherTokenBalance = await getBalance(client, address, otherTokenDenom);
+    
+    addLog(`Mengecek swap ${otherTokenSymbol} -> ZIG. Butuh: ${otherTokenAmountToSwap}, Saldo: ${otherTokenBalance.toFixed(4)}`, "info");
 
-    addLog(`Mengecek swap ${fromSymbol} -> ${toSymbol}. Butuh: ${amount}, Saldo: ${balance.toFixed(4)}`, "info");
-
-    if (balance >= amount) {
-        await performSwap(client, address, fromDenom, toDenom, amount, contract);
-        if (pair === "ZIG_ORO") lastSwapDirectionZigOro = lastSwapDirectionZigOro === "ZIG_TO_ORO" ? "ORO_TO_ZIG" : "ZIG_TO_ORO";
-        if (pair === "ZIG_BEE") lastSwapDirectionZigBee = lastSwapDirectionZigBee === "ZIG_TO_BEE" ? "BEE_TO_ZIG" : "ZIG_TO_BEE";
+    if (otherTokenBalance >= otherTokenAmountToSwap) {
+        await performSwap(client, address, otherTokenDenom, DENOM_ZIG, otherTokenAmountToSwap, contract);
     } else {
-        addLog(`Saldo tidak cukup untuk swap. Melewatkan.`, "wait");
+        addLog(`Saldo juga tidak cukup untuk swap ${otherTokenSymbol} -> ZIG. Melewatkan.`, "error");
     }
 }
 
@@ -276,7 +278,6 @@ async function startBot() {
             await sleep(delayMs);
         } catch (error) {
             addLog(`Terjadi error pada siklus utama: ${error.message}`, "error");
-            // ✅ PERBAIKAN: Waktu tunggu diubah menjadi 15 detik
             addLog("Mencoba lagi setelah 15 detik...", "wait");
             await sleep(15 * 1000); 
         }
