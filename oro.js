@@ -11,7 +11,7 @@ import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 // ===================================================================================
 
 // Masukkan 12 atau 24 kata seed phrase wallet-mu di sini
-const SEED_PHRASE = process.env.PRIVATE_KEY;
+const SEED_PHRASE = process.env.SEED_KEY;
 
 const config = {
   // Jumlah swap yang akan dilakukan setiap siklus
