@@ -26,7 +26,7 @@ const config = {
             ORO: { min: 0.1, max: 0.3 } 
         },
         ZIG_BEE: { 
-            ZIG: { min: 0.1, max: 0.5 },
+            ZIG: { min: 0.001, max: 0.01 },
             BEE: { min: 0.001, max: 0.002 }
         },
     },
@@ -55,17 +55,25 @@ const TOKEN_DECIMALS = {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function addLog(message, type = "info") {
-    const timestamp = new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
-    let coloredMessage;
+    let symbol;
+    let coloredMessage = chalk.white(message);
+
     switch (type) {
-        case "error": coloredMessage = chalk.redBright(`[ERROR] ${message}`); break;
-        case "success": coloredMessage = chalk.greenBright(`[SUCCESS] ${message}`); break;
-        case "wait": coloredMessage = chalk.yellowBright(`[WAIT] ${message}`); break;
-        case "info": coloredMessage = chalk.cyanBright(`[INFO] ${message}`); break;
-        case "swap": coloredMessage = chalk.magentaBright(`[SWAP] ${message}`); break;
-        default: coloredMessage = chalk.white(message);
+        case "success":
+            symbol = chalk.greenBright('[+]');
+            break;
+        case "error":
+            symbol = chalk.redBright('[-]');
+            coloredMessage = chalk.redBright(message);
+            break;
+        case "info":
+        case "wait":
+        case "swap":
+        default:
+            symbol = chalk.cyanBright('[info]');
+            break;
     }
-    console.log(`[${timestamp}] ${coloredMessage}`);
+    console.log(`${symbol} ${coloredMessage}`);
 }
 
 const getShortAddress = (address) => (address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "N/A");
