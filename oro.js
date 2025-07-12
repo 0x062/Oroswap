@@ -16,7 +16,7 @@ const SEED_PHRASE = process.env.SEED_PHRASE;
 const config = {
     swap: {
         repetitions: 2,
-        delayBetweenActions: { min: 10, max: 20 },
+        delayBetweenActions: { min: 10, max: 50 },
         randomAmountRanges: {
             ZIG_ORO: { 
                 ZIG: { min: 0.01, max: 0.05 },
@@ -34,11 +34,11 @@ const config = {
         autoStakeAfterAddLp: true,
         smart: {
             ORO_ZIG: {
-                minBalance: 0.1, // Minimum ORO untuk mencoba LP di pool ini
+                minBalance: 0.01, // Minimum ORO untuk mencoba LP di pool ini
                 lpPercentToUse: { min: 50, max: 90 }
             },
             ZIG_BEE: {
-                minBalance: 0.001, // Minimum BEE untuk mencoba LP di pool ini
+                minBalance: 0.0001, // Minimum BEE untuk mencoba LP di pool ini
                 lpPercentToUse: { min: 50, max: 90 }
             }
         }
