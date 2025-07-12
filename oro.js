@@ -14,33 +14,35 @@ dotenv.config({ quiet: true });
 const SEED_PHRASE = process.env.SEED_PHRASE;
 
 const config = {
-    swap: {
-        repetitions: 4,
-        delayBetweenActions: { min: 5, max: 10 },
-        randomAmountRanges: {
-            ZIG_ORO: { ZIG: { min: 0.1, max: 0.5 }, ORO: { min: 0.1, max: 0.2 } },
-            ZIG_BEE: { ZIG: { min: 0.01, max: 0.09 }, BEE: { min: 0.001, max: 0.002 } },
+    // Total swap acak bolak-balik
+    swapRepetitions: 4, 
+    
+    // ✅ Berapa kali ingin Add LP (menggunakan logika Smart)
+    addLpRepetitions: 2, 
+    
+    delayBetweenActions: { min: 10, max: 20 },
+    
+    randomAmountRanges: {
+        ZIG_ORO: { 
+            ZIG: { min: 0.1, max: 0.5 },
+            ORO: { min: 0.1, max: 0.2 } 
+        },
+        ZIG_BEE: { 
+            ZIG: { min: 0.01, max: 0.05 },
+            BEE: { min: 0.001, max: 0.002 }
         },
     },
-    addLp: {
-        mode: 'smart', // 'smart' atau 'fixed'
-        repetitions: 2,
-        smart: {
-            minOroBalanceForLp: 0.1, 
-            lpPercentToUse: { min: 50, max: 90 },
-        },
-        fixed: {
-            oroAmount: 0.5 
-        }
+
+    // Pengaturan untuk Smart Add LP
+    smartAddLp: {
+        minOroBalanceForLp: 0.1, 
+        lpPercentToUse: { min: 50, max: 90 },
     }
 };
 // ===================================================================================
 // 🛑 JANGAN UBAH APAPUN DI BAWAH GARIS INI 🛑
 // ===================================================================================
 
-// ... (Salin semua fungsi helper dari `RPC_URL` hingga sebelum `runCycle` dari skrip sebelumnya)
-// Fungsi-fungsi ini tidak berubah: RPC_URL, DENOMs, TOKEN_DECIMALS, sleep, addLog, getShortAddress, 
-// toMicroUnits, getRandomDelay, getCosmosClient, getBalance, getPoolInfo, calculateBeliefPrice
 const RPC_URL = "https://rpc.zigscan.net";
 const ORO_ZIG_CONTRACT = "zig15jqg0hmp9n06q0as7uk3x9xkwr9k3r7yh4ww2uc0hek8zlryrgmsamk4qg";
 const ZIG_BEE_CONTRACT = "zig1r50m5lafnmctat4xpvwdpzqndynlxt2skhr4fhzh76u0qar2y9hqu74u5h";
@@ -48,22 +50,63 @@ const DENOM_ORO = "coin.zig10rfjm85jmzfhravjwpq3hcdz8ngxg7lxd0drkr.uoro";
 const DENOM_ZIG = "uzig";
 const DENOM_BEE = "coin.zig1ptxpjgl3lsxrq99zl6ad2nmrx4lhnhne26m6ys.bee";
 const GAS_PRICE = GasPrice.fromString("0.03uzig");
-const TOKEN_DECIMALS = {
-    uzig: 6,
-    "coin.zig10rfjm85jmzfhravjwpq3hcdz8ngxg7lxd0drkr.uoro": 6,
-    "coin.zig1ptxpjgl3lsxrq99zl6ad2nmrx4lhnhne26m6ys.bee": 6,
-};
+const TOKEN_DECIMALS = { uzig: 6, "coin.zig10rfjm85jmzfhravjwpq3hcdz8ngxg7lxd0drkr.uoro": 6, "coin.zig1ptxpjgl3lsxrq99zl6ad2nmrx4lhnhne26m6ys.bee": 6 };
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-function addLog(message, type = "info") { let symbol; let coloredMessage = chalk.white(message); switch (type) { case "success": symbol = chalk.greenBright('[+]'); break; case "error": symbol = chalk.redBright('[-]'); coloredMessage = chalk.redBright(message); break; case "wait": symbol = chalk.yellowBright('[~]'); coloredMessage = chalk.yellow(message); break; case "swap": symbol = chalk.magentaBright('[>]'); break; case "info": default: symbol = chalk.cyanBright('[i]'); break; } console.log(`${symbol} ${coloredMessage}`); }
+
+function addLog(message, type = "info") {
+    let symbol;
+    let coloredMessage = chalk.white(message);
+    switch (type) {
+        case "success": symbol = chalk.greenBright('[+]'); break;
+        case "error": symbol = chalk.redBright('[-]'); coloredMessage = chalk.redBright(message); break;
+        case "wait": symbol = chalk.yellowBright('[~]'); coloredMessage = chalk.yellow(message); break;
+        case "swap": symbol = chalk.magentaBright('[>]'); break;
+        case "info": default: symbol = chalk.cyanBright('[i]'); break;
+    }
+    console.log(`${symbol} ${coloredMessage}`);
+}
+
 const getShortAddress = (address) => (address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "N/A");
 const toMicroUnits = (amount, denom) => Math.floor(parseFloat(amount) * 10 ** (TOKEN_DECIMALS[denom] || 6));
-const getRandomDelay = () => (Math.floor(Math.random() * (config.swap.delayBetweenActions.max - config.swap.delayBetweenActions.min + 1)) + config.swap.delayBetweenActions.min) * 1000;
-async function getCosmosClient(seedPhrase) { if (!seedPhrase) throw new Error("SEED_PHRASE tidak ditemukan di file .env Anda."); const wallet = await DirectSecp256k1HdWallet.fromMnemonic(seedPhrase, { prefix: "zig" }); const client = await SigningCosmWasmClient.connectWithSigner(RPC_URL, wallet, { gasPrice: GAS_PRICE }); const [account] = await wallet.getAccounts(); return { client, address: account.address }; }
-async function getBalance(client, address, denom) { try { const { amount } = await client.getBalance(address, denom); return Number(amount / 10 ** TOKEN_DECIMALS[denom]); } catch (error) { addLog(`Gagal mengambil balance untuk ${denom}: ${error.message}`, "error"); return 0; } }
-async function getPoolInfo(client, contractAddress) { try { return await client.queryContractSmart(contractAddress, { pool: {} }); } catch (error) { addLog(`Gagal mengambil info pool untuk ${contractAddress}: ${error.message}`, "error"); return null; } }
-function calculateBeliefPrice(poolInfo, contractAddress) { if (!poolInfo?.assets || poolInfo.assets.length !== 2) throw new Error("Data pool tidak valid."); const assetZIG = poolInfo.assets.find(a => a.info.native_token.denom === DENOM_ZIG); const otherAsset = poolInfo.assets.find(a => a.info.native_token.denom !== DENOM_ZIG); const zigAmount = parseInt(assetZIG.amount); const otherAmount = parseInt(otherAsset.amount); if (contractAddress === ZIG_BEE_CONTRACT) return (zigAmount / otherAmount).toFixed(18); else return (otherAmount / zigAmount).toFixed(18); }
+const getRandomDelay = () => (Math.floor(Math.random() * (config.delayBetweenActions.max - config.delayBetweenActions.min + 1)) + config.delayBetweenActions.min) * 1000;
 
-// --- FUNGSI UTAMA (dengan modifikasi) ---
+async function getCosmosClient(seedPhrase) {
+    if (!seedPhrase) throw new Error("SEED_PHRASE tidak ditemukan di file .env Anda.");
+    const wallet = await DirectSecp256k1HdWallet.fromMnemonic(seedPhrase, { prefix: "zig" });
+    const client = await SigningCosmWasmClient.connectWithSigner(RPC_URL, wallet, { gasPrice: GAS_PRICE });
+    const [account] = await wallet.getAccounts();
+    return { client, address: account.address };
+}
+
+async function getBalance(client, address, denom) {
+    try {
+        const { amount } = await client.getBalance(address, denom);
+        return Number(amount / 10 ** TOKEN_DECIMALS[denom]);
+    } catch (error) {
+        addLog(`Gagal mengambil balance untuk ${denom}: ${error.message}`, "error");
+        return 0;
+    }
+}
+
+async function getPoolInfo(client, contractAddress) {
+    try {
+        return await client.queryContractSmart(contractAddress, { pool: {} });
+    } catch (error) {
+        addLog(`Gagal mengambil info pool untuk ${contractAddress}: ${error.message}`, "error");
+        return null;
+    }
+}
+
+function calculateBeliefPrice(poolInfo, contractAddress) {
+    if (!poolInfo?.assets || poolInfo.assets.length !== 2) throw new Error("Data pool tidak valid.");
+    const assetZIG = poolInfo.assets.find(a => a.info.native_token.denom === DENOM_ZIG);
+    const otherAsset = poolInfo.assets.find(a => a.info.native_token.denom !== DENOM_ZIG);
+    const zigAmount = parseInt(assetZIG.amount);
+    const otherAmount = parseInt(otherAsset.amount);
+    if (contractAddress === ZIG_BEE_CONTRACT) return (zigAmount / otherAmount).toFixed(18);
+    else return (otherAmount / zigAmount).toFixed(18);
+}
 
 async function performSwap(client, address, fromDenom, toDenom, amount, contractAddress) {
     try {
@@ -114,7 +157,7 @@ async function addLiquidityOroZig(client, address, oroAmount) {
 }
 
 async function autoSwap(client, address, pair) {
-    const ranges = config.swap.randomAmountRanges[pair];
+    const ranges = config.randomAmountRanges[pair];
     const contract = pair === "ZIG_ORO" ? ORO_ZIG_CONTRACT : ZIG_BEE_CONTRACT;
     const otherTokenDenom = pair === "ZIG_ORO" ? DENOM_ORO : DENOM_BEE;
     const otherTokenSymbol = pair === "ZIG_ORO" ? "ORO" : "BEE";
@@ -141,14 +184,14 @@ async function runCycle(client, address, reportSummary) {
     addLog(`Memulai siklus untuk wallet: ${getShortAddress(address)}`, "info");
     
     // Tahap 1: Swap Acak
-    if (config.swap.repetitions > 0) {
-        addLog(`--- Tahap 1: Melakukan ${config.swap.repetitions} Swap Acak ---`, "info");
-        for (let i = 0; i < config.swap.repetitions; i++) {
-            addLog(`--- Swap Acak ke-${i + 1} dari ${config.swap.repetitions} ---`, "info");
+    if (config.swapRepetitions > 0) {
+        addLog(`--- Tahap 1: Melakukan ${config.swapRepetitions} Swap Acak ---`, "info");
+        for (let i = 0; i < config.swapRepetitions; i++) {
+            addLog(`--- Swap Acak ke-${i + 1} dari ${config.swapRepetitions} ---`, "info");
             const pair = Math.random() < 0.5 ? "ZIG_ORO" : "ZIG_BEE";
             const result = await autoSwap(client, address, pair);
             if(result) reportSummary.push(result);
-            if (i < config.swap.repetitions - 1) {
+            if (i < config.swapRepetitions - 1) {
                 const delay = getRandomDelay();
                 addLog(`Menunggu ${delay / 1000} detik...`, "wait");
                 await sleep(delay);
@@ -156,56 +199,31 @@ async function runCycle(client, address, reportSummary) {
         }
     }
 
-    // Tahap 2: Add Liquidity sesuai mode
-    if (config.addLp.repetitions > 0) {
+    // Tahap 2: Smart Add Liquidity
+    if (config.addLpRepetitions > 0) {
         const delay = getRandomDelay();
         addLog(`Menunggu ${delay / 1000} detik sebelum Add LP...`, "wait");
         await sleep(delay);
+        
+        addLog(`--- Tahap 2: Melakukan ${config.addLpRepetitions} Smart Add Liquidity ---`, "info");
+        for (let i = 0; i < config.addLpRepetitions; i++) {
+            addLog(`--- Add LP ke-${i + 1} dari ${config.addLpRepetitions} ---`, "info");
+            const oroBalance = await getBalance(client, address, DENOM_ORO);
+            addLog(`Mengecek saldo ORO. Saldo saat ini: ${oroBalance.toFixed(4)} ORO`, "info");
 
-        addLog(`--- Tahap 2: Melakukan Add LP (Mode: ${config.addLp.mode}) ---`, "info");
-        for (let i = 0; i < config.addLp.repetitions; i++) {
-            addLog(`--- Add LP ke-${i + 1} dari ${config.addLp.repetitions} ---`, "info");
-
-            if (config.addLp.mode === 'smart') {
-                const oroBalance = await getBalance(client, address, DENOM_ORO);
-                addLog(`Mengecek saldo ORO untuk Add LP. Saldo saat ini: ${oroBalance.toFixed(4)} ORO`, "info");
-                if (oroBalance >= config.addLp.smart.minOroBalanceForLp) {
-                    const percent = (Math.random() * (config.addLp.smart.lpPercentToUse.max - config.addLp.smart.lpPercentToUse.min) + config.addLp.smart.lpPercentToUse.min) / 100;
-                    const oroAmountToLp = oroBalance * percent;
-                    addLog(`Saldo ORO mencukupi. Akan menggunakan ${Math.round(percent*100)}% dari saldo, yaitu ${oroAmountToLp.toFixed(6)} ORO untuk Add LP.`, "info");
-                    const result = await addLiquidityOroZig(client, address, oroAmountToLp);
-                    if(result) reportSummary.push(result);
-                } else {
-                    const waitMessage = `Saldo ORO (${oroBalance.toFixed(4)}) di bawah ambang batas minimum (${config.addLp.smart.minOroBalanceForLp}). Melewatkan Add LP.`;
-                    addLog(waitMessage, "wait");
-                    reportSummary.push(`🟡 ${waitMessage}`);
-                }
-            } else if (config.addLp.mode === 'fixed') {
-                const requiredOro = config.addLp.fixed.oroAmount;
-                addLog(`Mode Fixed: Membutuhkan ${requiredOro} ORO untuk Add LP.`, "info");
-                let oroBalance = await getBalance(client, address, DENOM_ORO);
-                if (oroBalance < requiredOro) {
-                    const deficit = requiredOro - oroBalance;
-                    addLog(`Saldo ORO tidak cukup. Mencoba swap ZIG ke ORO untuk menutupi kekurangan ${deficit.toFixed(4)} ORO.`, "wait");
-                    // Perlu estimasi berapa ZIG yg dibutuhkan
-                    const poolInfo = await getPoolInfo(client, ORO_ZIG_CONTRACT);
-                    const price = calculateBeliefPrice(poolInfo, ORO_ZIG_CONTRACT); // ORO per ZIG
-                    const zigNeededForSwap = deficit / parseFloat(price);
-                    await performSwap(client, address, DENOM_ZIG, DENOM_ORO, (zigNeededForSwap * 1.05).toFixed(4), ORO_ZIG_CONTRACT); // swap lebih sedikit 5%
-                }
-                // Cek saldo lagi setelah kemungkinan swap
-                oroBalance = await getBalance(client, address, DENOM_ORO);
-                if(oroBalance >= requiredOro) {
-                    const result = await addLiquidityOroZig(client, address, requiredOro);
-                    if(result) reportSummary.push(result);
-                } else {
-                     const errorMessage = `Gagal mendapatkan cukup ORO untuk Add LP. Melewatkan.`;
-                     addLog(errorMessage, "error");
-                     reportSummary.push(`❌ ${errorMessage}`);
-                }
+            if (oroBalance >= config.smartAddLp.minOroBalanceForLp) {
+                const percent = (Math.random() * (config.smartAddLp.lpPercentToUse.max - config.smartAddLp.lpPercentToUse.min) + config.smartAddLp.lpPercentToUse.min) / 100;
+                const oroAmountToLp = oroBalance * percent;
+                addLog(`Saldo ORO mencukupi. Akan menggunakan ${Math.round(percent*100)}% dari saldo untuk Add LP.`, "info");
+                const result = await addLiquidityOroZig(client, address, oroAmountToLp);
+                if(result) reportSummary.push(result);
+            } else {
+                const waitMessage = `Saldo ORO (${oroBalance.toFixed(4)}) di bawah ambang batas minimum (${config.smartAddLp.minOroBalanceForLp}). Melewatkan Add LP.`;
+                addLog(waitMessage, "wait");
+                reportSummary.push(`🟡 ${waitMessage}`);
             }
 
-            if (i < config.addLp.repetitions - 1) {
+            if (i < config.addLpRepetitions - 1) {
                 const delay = getRandomDelay();
                 addLog(`Menunggu ${delay / 1000} detik...`, "wait");
                 await sleep(delay);
