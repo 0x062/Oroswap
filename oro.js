@@ -9,25 +9,25 @@ import { sendTelegramReport } from "./telegram_reporter.js";
 dotenv.config({ quiet: true });
 
 // ===================================================================================
-// ⚙️ PENGATURAN UTAMA - HANYA EDIT BAGIAN INI ⚙️
+// ⚙️ PENGATURAN UTAMA
 // ===================================================================================
 const SEED_PHRASE = process.env.SEED_PHRASE;
 
 const config = {
     swap: {
         repetitions: 4,
-        delayBetweenActions: { min: 10, max: 30 },
+        delayBetweenActions: { min: 10, max: 20 },
         randomAmountRanges: {
-            ZIG_ORO: { ZIG: { min: 0.001, max: 0.02 }, ORO: { min: 0.01, max: 0.2 } },
-            ZIG_BEE: { ZIG: { min: 1.0, max: 1.7 }, BEE: { min: 0.0001, max: 0.002 } },
+            ZIG_ORO: { ZIG: { min: 0.01, max: 0.2 }, ORO: { min: 0.01, max: 0.2 } },
+            ZIG_BEE: { ZIG: { min: 1.0, max: 1.5 }, BEE: { min: 0.00001, max: 0.002 } },
         },
     },
     addLp: {
         repetitions: 1,
         autoStakeAfterAddLp: true,
         smart: {
-            ORO_ZIG: { minBalance: 0.001, lpPercentToUse: { min: 20, max: 40 } },
-            ZIG_BEE: { minBalance: 0.00001, lpPercentToUse: { min: 20, max: 50 } }
+            ORO_ZIG: { minBalance: 0.01, lpPercentToUse: { min: 10, max: 40 } },
+            ZIG_BEE: { minBalance: 0.000001, lpPercentToUse: { min: 10, max: 40 } }
         }
     },
     retry: {
@@ -48,8 +48,8 @@ const DENOM_BEE = "coin.zig1ptxpjgl3lsxrq99zl6ad2nmrx4lhnhne26m6ys.bee";
 const GAS_PRICE = GasPrice.fromString("0.03uzig");
 const TOKEN_DECIMALS = { uzig: 6, "coin.zig10rfjm85jmzfhravjwpq3hcdz8ngxg7lxd0drkr.uoro": 6, "coin.zig1ptxpjgl3lsxrq99zl6ad2nmrx4lhnhne26m6ys.bee": 6 };
 
-let client; // ✅ Client sekarang menjadi variabel global agar bisa di-reset
-let address; // ✅ Address juga
+let client;
+let address;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function addLog(message, type = "info") { let symbol; let coloredMessage = chalk.white(message); switch (type) { case "success": symbol = chalk.greenBright('[+]'); break; case "error": symbol = chalk.redBright('[-]'); coloredMessage = chalk.redBright(message); break; case "wait": symbol = chalk.yellowBright('[~]'); coloredMessage = chalk.yellow(message); break; case "swap": symbol = chalk.magentaBright('[>]'); break; case "info": default: symbol = chalk.cyanBright('[i]'); break; } console.log(`${symbol} ${coloredMessage}`); }
@@ -65,30 +65,29 @@ async function initializeClient() {
     client = await SigningCosmWasmClient.connectWithSigner(RPC_URL, wallet, { gasPrice: GAS_PRICE });
 }
 
-async function getBalance(denom) { try { const { amount } = await client.getBalance(address, denom); return Number(amount / 10 ** TOKEN_DECIMALS[denom]); } catch (error) { addLog(`Gagal mengambil balance untuk ${denom}: ${error.message}`, "error"); return 0; } }
-async function getPoolInfo(contractAddress) { try { return await client.queryContractSmart(contractAddress, { pool: {} }); } catch (error) { addLog(`Gagal mengambil info pool untuk ${contractAddress}: ${error.message}`, "error"); return null; } }
+async function getBalance(denom) { try { const { amount } = await client.getBalance(address, denom); return Number(amount / 10 ** TOKEN_DECIMALS[denom]); } catch (error) { throw new Error(`Gagal mengambil balance untuk ${denom}: ${error.message}`); } }
+async function getPoolInfo(contractAddress) { try { return await client.queryContractSmart(contractAddress, { pool: {} }); } catch (error) { throw new Error(`Gagal mengambil info pool untuk ${contractAddress}: ${error.message}`); } }
 function calculateBeliefPrice(poolInfo, contractAddress) { if (!poolInfo?.assets || poolInfo.assets.length !== 2) throw new Error("Data pool tidak valid."); const assetZIG = poolInfo.assets.find(a => a.info.native_token.denom === DENOM_ZIG); const otherAsset = poolInfo.assets.find(a => a.info.native_token.denom !== DENOM_ZIG); const zigAmount = parseInt(assetZIG.amount); const otherAmount = parseInt(otherAsset.amount); if (contractAddress === ZIG_BEE_CONTRACT) return (zigAmount / otherAmount).toFixed(18); else return (otherAmount / zigAmount).toFixed(18); }
 
-// ✅ MEKANISME RETRY UTAMA (MANAJER TRANSAKSI)
+// ✅ MEKANISME RETRY & SELF-HEALING UTAMA
 async function withRetry(action) {
     for (let i = 0; i <= config.retry.maxRetries; i++) {
         try {
-            return await action(); // Coba jalankan aksi
+            return await action();
         } catch (error) {
             addLog(`Aksi gagal: ${error.message}`, "error");
 
             if (i === config.retry.maxRetries) {
                 addLog("Gagal maksimal, menyerah pada aksi ini.", "error");
-                return `❌ Aksi gagal total setelah ${config.retry.maxRetries} percobaan.`;
+                return `❌ Aksi gagal total: ${error.message}`;
             }
 
-            // Logika Self-Healing
             if (error.message.includes('account sequence mismatch')) {
                 addLog("Terdeteksi account sequence mismatch. Mereset koneksi untuk sinkronisasi...", "wait");
                 try {
-                    await initializeClient(); // Paksa reset koneksi
+                    await initializeClient();
                     addLog("Koneksi berhasil di-reset. Mencoba lagi segera...", "success");
-                    continue; // Langsung coba lagi tanpa delay panjang
+                    continue; // Langsung ke percobaan berikutnya dengan client baru
                 } catch (resetError) {
                     addLog(`Gagal me-reset koneksi: ${resetError.message}`, "error");
                 }
@@ -100,8 +99,7 @@ async function withRetry(action) {
     }
 }
 
-// ✅ Fungsi performSwap, addLiquidity, dll sekarang menjadi lebih simpel
-// Mereka tidak perlu lagi loop retry, karena sudah ditangani oleh withRetry
+// ✅ Fungsi transaksi dibuat simpel, error akan ditangani 'withRetry'
 async function performSwap(fromDenom, toDenom, amount, contractAddress) {
     const poolInfo = await getPoolInfo(contractAddress);
     const beliefPrice = calculateBeliefPrice(poolInfo, contractAddress);
@@ -160,7 +158,6 @@ async function autoSwap(pair) {
     }
 }
 
-// ✅ runCycle sekarang memanggil `withRetry`
 async function runCycle(reportSummary) {
     addLog(`Memulai siklus untuk wallet: ${getShortAddress(address)}`, "info");
     if (config.swap.repetitions > 0) {
@@ -230,13 +227,11 @@ async function startBot() {
     addLog("🤖 OROSWAP AUTO BOT DIMULAI 🤖", "success");
     const reportSummary = [];
     try {
-        await initializeClient(); // Inisialisasi awal
+        await initializeClient();
         const shortAddress = getShortAddress(address);
         addLog(`Wallet berhasil dimuat: ${shortAddress}`, "success");
         reportSummary.push(`- Wallet: *${shortAddress}*`);
-        
-        await runCycle(reportSummary); // Jalankan siklus utama
-
+        await runCycle(reportSummary);
         addLog("✅ Semua tugas telah selesai. Bot akan berhenti.", "success");
         reportSummary.push("\n*Status Akhir: Berhasil* 👍");
         await sendTelegramReport(reportSummary);
