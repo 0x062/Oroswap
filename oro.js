@@ -23,7 +23,7 @@ const config = {
         },
     },
     addLp: {
-        repetitions: 1,
+        repetitions: 8,
         autoStakeAfterAddLp: true,
         smart: {
             ORO_ZIG: { minBalance: 0.01, lpPercentToUse: { min: 10, max: 40 } },
