@@ -32,7 +32,8 @@ const config = {
     },
     retry: {
         maxRetries: 5,
-        delaySeconds: 15 
+        delaySeconds: 15,
+        sequenceMismatchDelaySeconds: 60
     }
 };
 // ===================================================================================
@@ -69,11 +70,11 @@ async function getBalance(denom) { try { const { amount } = await client.getBala
 async function getPoolInfo(contractAddress) { try { return await client.queryContractSmart(contractAddress, { pool: {} }); } catch (error) { throw new Error(`Gagal mengambil info pool untuk ${contractAddress}: ${error.message}`); } }
 function calculateBeliefPrice(poolInfo, contractAddress) { if (!poolInfo?.assets || poolInfo.assets.length !== 2) throw new Error("Data pool tidak valid."); const assetZIG = poolInfo.assets.find(a => a.info.native_token.denom === DENOM_ZIG); const otherAsset = poolInfo.assets.find(a => a.info.native_token.denom !== DENOM_ZIG); const zigAmount = parseInt(assetZIG.amount); const otherAmount = parseInt(otherAsset.amount); if (contractAddress === ZIG_BEE_CONTRACT) return (zigAmount / otherAmount).toFixed(18); else return (otherAmount / zigAmount).toFixed(18); }
 
-// ✅ MEKANISME RETRY & SELF-HEALING UTAMA
+// Ganti fungsi withRetry yang lama dengan yang ini
 async function withRetry(action) {
     for (let i = 0; i <= config.retry.maxRetries; i++) {
         try {
-            return await action();
+            return await action(); // Coba jalankan aksi
         } catch (error) {
             addLog(`Aksi gagal: ${error.message}`, "error");
 
@@ -82,17 +83,24 @@ async function withRetry(action) {
                 return `❌ Aksi gagal total: ${error.message}`;
             }
 
+            // ✅ LOGIKA KARANTINA CERDAS
             if (error.message.includes('account sequence mismatch')) {
-                addLog("Terdeteksi account sequence mismatch. Mereset koneksi untuk sinkronisasi...", "wait");
+                addLog("Terdeteksi account sequence mismatch. Mereset koneksi...", "wait");
                 try {
                     await initializeClient();
-                    addLog("Koneksi berhasil di-reset. Mencoba lagi segera...", "success");
-                    continue; // Langsung ke percobaan berikutnya dengan client baru
+                    addLog("Koneksi berhasil di-reset.", "success");
+                    // Masuk mode karantina untuk memberi waktu RPC sinkronisasi
+                    const quarantineTime = config.retry.sequenceMismatchDelaySeconds;
+                    addLog(`Masuk mode karantina selama ${quarantineTime} detik...`, "wait");
+                    await sleep(quarantineTime * 1000);
+                    addLog("Karantina selesai. Mencoba lagi...", "info");
+                    continue; // Langsung ke percobaan berikutnya
                 } catch (resetError) {
                     addLog(`Gagal me-reset koneksi: ${resetError.message}`, "error");
                 }
             }
             
+            // Retry biasa untuk error lainnya
             addLog(`Mencoba lagi dalam ${config.retry.delaySeconds} detik... (${i + 1}/${config.retry.maxRetries})`, "wait");
             await sleep(config.retry.delaySeconds * 1000);
         }
