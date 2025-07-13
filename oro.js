@@ -19,7 +19,7 @@ const config = {
         delayBetweenActions: { min: 10, max: 40 },
         randomAmountRanges: {
             ZIG_ORO: { ZIG: { min: 0.001, max: 0.2 }, ORO: { min: 0.0001, max: 0.2 } },
-            ZIG_BEE: { ZIG: { min: 1.0, max: 1.5 }, BEE: { min: 0.00001, max: 0.002 } },
+            ZIG_BEE: { ZIG: { min: 1.0, max: 2.1 }, BEE: { min: 0.00001, max: 0.02 } },
         },
     },
     addLp: {
@@ -227,26 +227,61 @@ async function runCycle(client, address, reportSummary) {
     }
 }
 
+// Ganti fungsi startBot yang lama dengan versi baru ini
 async function startBot() {
     addLog("🤖 OROSWAP AUTO BOT DIMULAI 🤖", "success");
     const reportSummary = [];
+    let client, address; // Definisikan di luar loop
+
     try {
-        const { client, address } = await getCosmosClient(SEED_PHRASE);
+        // Inisialisasi awal
+        ({ client, address } = await getCosmosClient(SEED_PHRASE));
         const shortAddress = getShortAddress(address);
         addLog(`Wallet berhasil dimuat: ${shortAddress}`, "success");
         reportSummary.push(`- Wallet: *${shortAddress}*`);
-        await runCycle(client, address, reportSummary);
-        addLog("✅ Semua tugas telah selesai. Bot akan berhenti.", "success");
-        reportSummary.push("\n*Status Akhir: Berhasil* 👍");
-        await sendTelegramReport(reportSummary);
-        console.log(chalk.blueBright("===================================================="));
-        process.exit(0);
     } catch (error) {
-        addLog(`Terjadi error fatal: ${error.message}`, "error");
-        reportSummary.push(`\n❌ *Status Akhir: Gagal Total*\n- Alasan: ${error.message}`);
+        addLog(`Gagal total saat inisialisasi awal: ${error.message}`, "error");
+        reportSummary.push(`\n❌ *Status Akhir: Gagal Total*\n- Alasan: Inisialisasi awal gagal.`);
         await sendTelegramReport(reportSummary);
         process.exit(1);
     }
+    
+    // Loop utama untuk siklus kerja
+    while (true) {
+        try {
+            await runCycle(client, address, reportSummary);
+            
+            // Jika siklus berhasil, kirim laporan dan keluar
+            addLog("✅ Semua tugas telah selesai. Bot akan berhenti.", "success");
+            reportSummary.push("\n*Status Akhir: Berhasil* 👍");
+            await sendTelegramReport(reportSummary);
+            console.log(chalk.blueBright("===================================================="));
+            process.exit(0);
+
+        } catch (error) {
+            addLog(`Terjadi error pada siklus utama: ${error.message}`, "error");
+            
+            // ✅ LOGIKA BARU: Cek jika error adalah sequence mismatch
+            if (error.message.includes('account sequence mismatch')) {
+                try {
+                    addLog("Terdeteksi account sequence mismatch. Menginisialisasi ulang koneksi...", "wait");
+                    // Paksa inisialisasi ulang client untuk mendapatkan sequence terbaru
+                    ({ client, address } = await getCosmosClient(SEED_PHRASE));
+                    addLog("Koneksi berhasil di-reset. Melanjutkan siklus...", "success");
+                    // Langsung coba lagi siklusnya tanpa menunggu lama
+                    continue; 
+                } catch (reconnectError) {
+                    addLog(`Gagal menginisialisasi ulang koneksi: ${reconnectError.message}`, "error");
+                    // Jika reset koneksi gagal, tunggu sebelum coba dari awal lagi
+                    await sleep(config.retry.delaySeconds * 1000);
+                }
+            } else {
+                 // Untuk error lain, tunggu seperti biasa
+                 await sleep(config.retry.delaySeconds * 1000);
+            }
+        }
+    }
 }
 
+// Pastikan fungsi startBot() dipanggil di akhir file
 startBot();
