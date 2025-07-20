@@ -31,7 +31,7 @@ const config = {
     },
     retry: {
         maxRetries: 5,
-        delaySeconds: 15,
+        delaySeconds: 34,
         sequenceMismatchDelaySeconds: 60
     }
 };
