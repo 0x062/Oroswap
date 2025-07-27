@@ -123,26 +123,27 @@ async function getPoolInfo(client, contractAddress) {
     }
 }
 
-// PERBAIKAN BIGINT: Fungsi ini sekarang menggunakan BigInt untuk kalkulasi yang aman.
-function calculateBeliefPrice(poolInfo, contractAddress) {
-    if (!poolInfo?.assets || poolInfo.assets.length !== 2) throw new Error("Data pool tidak valid.");
-
-    const assetZIG = poolInfo.assets.find(a => a.info.native_token.denom === chainInfo.denoms.ZIG);
-    const otherAsset = poolInfo.assets.find(a => a.info.native_token.denom !== chainInfo.denoms.ZIG);
-    if (!assetZIG || !otherAsset) throw new Error("Aset pool tidak lengkap.");
-
-    const zigAmount = BigInt(assetZIG.amount);
-    const otherAmount = BigInt(otherAsset.amount);
-    
-    // Kita simulasikan desimal dengan presisi 18 angka menggunakan BigInt
-    const precision = 10n ** 18n;
-
-    let beliefPriceBigInt;
-    if (contractAddress === chainInfo.contracts.ZIG_BEE) {
-        beliefPriceBigInt = (zigAmount * precision) / otherAmount;
-    } else {
-        beliefPriceBigInt = (otherAmount * precision) / zigAmount;
+function calculateBeliefPrice(poolInfo, fromDenom, toDenom) {
+    if (!poolInfo?.assets || poolInfo.assets.length !== 2) {
+        throw new Error("Data pool tidak valid untuk menghitung belief_price.");
     }
+
+    const assetFrom = poolInfo.assets.find(a => a.info.native_token.denom === fromDenom);
+    const assetTo = poolInfo.assets.find(a => a.info.native_token.denom === toDenom);
+
+    if (!assetFrom || !assetTo) {
+        throw new Error(`Aset untuk ${fromDenom} atau ${toDenom} tidak ditemukan di pool.`);
+    }
+
+    const amountFrom = BigInt(assetFrom.amount);
+    const amountTo = BigInt(assetTo.amount);
+
+    if (amountTo === 0n) {
+        throw new Error("Aset 'To' dalam pool memiliki jumlah nol, tidak dapat menghitung harga.");
+    }
+
+    const precision = 10n ** 18n;
+    const beliefPriceBigInt = (amountFrom * precision) / amountTo;
 
     // Format kembali ke string desimal
     let beliefPriceString = beliefPriceBigInt.toString();
@@ -153,10 +154,9 @@ function calculateBeliefPrice(poolInfo, contractAddress) {
     }
 }
 
-
 async function performSwap(client, address, { fromDenom, toDenom, amount, contractAddress }) {
     const poolInfo = await getPoolInfo(client, contractAddress);
-    const beliefPrice = calculateBeliefPrice(poolInfo, contractAddress);
+    const beliefPrice = calculateBeliefPrice(poolInfo, fromDenom, toDenom);
     addLog(`Harga pool saat ini (belief_price): ${beliefPrice}`, "info");
 
     const microAmount = toMicroUnitsString(amount, fromDenom);
