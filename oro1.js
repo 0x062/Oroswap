@@ -37,7 +37,7 @@ const config = {
 };
 
 const chainInfo = {
-    RPC_URL: "https://ziggurat-rpc.polkachu.com:443",
+    RPC_URL: "https://public-zigchain-testnet-lcd.numia.xyz/",
     GAS_PRICE: GasPrice.fromString("0.03uzig"),
     contracts: {
         ORO_ZIG: "zig15jqg0hmp9n06q0as7uk3x9xkwr9k3r7yh4ww2uc0hek8zlryrgmsamk4qg",
