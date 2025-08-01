@@ -201,14 +201,14 @@ async function addLiquidity(client, address, { contract, tokenDenom, tokenAmount
     return `✅ ${logMessage} *${tokenAmount.toFixed(4)} ${tokenSymbol}* & *${zigNeededForDisplay.toFixed(4)} ZIG* berhasil.`;
 }
 
-// ===================================================================================
-// 🔄 LOGIKA BOT & EKSEKUSI
-// ===================================================================================
+async function withRetry(client, address, action, onReset) {
+    let currentClient = client;
+    let currentAddress = address;
 
-async function withRetry(action, onReset) {
     for (let i = 0; i <= config.retry.maxRetries; i++) {
         try {
-            return await action();
+            // Menjalankan 'action' dengan client & address terbaru
+            return await action(currentClient, currentAddress);
         } catch (error) {
             addLog(`Aksi gagal: ${error.message}`, "error");
 
@@ -220,13 +220,17 @@ async function withRetry(action, onReset) {
             if (error.message.includes('account sequence mismatch')) {
                 addLog("Terdeteksi account sequence mismatch. Mereset koneksi...", "wait");
                 try {
-                    await onReset();
+                    // Panggil onReset untuk mendapatkan client & address baru
+                    const { client: newClient, address: newAddress } = await onReset();
+                    currentClient = newClient;
+                    currentAddress = newAddress;
+                    
                     addLog("Koneksi berhasil di-reset.", "success");
                     const quarantineTime = config.retry.sequenceMismatchDelaySeconds;
                     addLog(`Masuk mode karantina selama ${quarantineTime} detik...`, "wait");
                     await sleep(quarantineTime * 1000);
                     addLog("Karantina selesai. Mencoba lagi...", "info");
-                    continue;
+                    continue; // Lanjut ke iterasi berikutnya untuk mencoba lagi dengan client baru
                 } catch (resetError) {
                     addLog(`Gagal me-reset koneksi: ${resetError.message}`, "error");
                 }
@@ -286,7 +290,7 @@ async function handleAddLiquidity(client, address, poolType) {
 
 async function runCycle(client, address, onReset, reportSummary) {
     addLog(`Memulai siklus untuk wallet: ${getShortAddress(address)}`, "info");
-    const wrappedRetry = (action) => withRetry(action, onReset);
+    // Hapus baris wrappedRetry yang lama
 
     if (config.swap.repetitions > 0) {
         addLog(`--- Tahap 1: Melakukan ${config.swap.repetitions} Swap Acak ---`, "info");
@@ -294,7 +298,13 @@ async function runCycle(client, address, onReset, reportSummary) {
             addLog(`--- Swap Acak ke-${i + 1} dari ${config.swap.repetitions} ---`, "info");
             const pair = Math.random() < 0.5 ? "ZIG_ORO" : "ZIG_BEE";
             try {
-                const result = await wrappedRetry(() => autoSwap(client, address, pair));
+                // PANGGIL withRetry DENGAN CARA BARU
+                const result = await withRetry(
+                    client, 
+                    address, 
+                    (currentClient, currentAddress) => autoSwap(currentClient, currentAddress, pair), 
+                    onReset
+                );
                 if (result) reportSummary.push(result);
             } catch (e) {
                 const errorMessage = `❌ Gagal melakukan swap acak: ${e.message}`;
@@ -321,12 +331,18 @@ async function runCycle(client, address, onReset, reportSummary) {
             const chosenPool = Math.random() < 0.5 ? 'ORO_ZIG' : 'ZIG_BEE';
             addLog(`Memilih pool LP secara acak: ${chosenPool}`, "info");
             try {
-                const result = await wrappedRetry(() => handleAddLiquidity(client, address, chosenPool));
+                // UBAH PANGGILAN INI JUGA
+                const result = await withRetry(
+                    client, 
+                    address, 
+                    (currentClient, currentAddress) => handleAddLiquidity(currentClient, currentAddress, chosenPool), 
+                    onReset
+                );
                 if (result) reportSummary.push(result);
             } catch(e) {
-                 const errorMessage = `❌ Gagal Add LP untuk ${chosenPool}: ${e.message}`;
-                 addLog(errorMessage, 'error');
-                 reportSummary.push(errorMessage);
+                const errorMessage = `❌ Gagal Add LP untuk ${chosenPool}: ${e.message}`;
+                addLog(errorMessage, 'error');
+                reportSummary.push(errorMessage);
             }
 
             if (i < config.addLp.repetitions - 1) {
@@ -343,20 +359,31 @@ async function startBot() {
     let client, address;
     const reportSummary = [];
 
+    // Fungsi ini sekarang harus me-return client dan address baru
     const resetConnection = async () => {
-        ({ client, address } = await initializeClient());
+        const newConnection = await initializeClient();
+        client = newConnection.client; // Perbarui variabel di scope luar
+        address = newConnection.address; // Perbarui variabel di scope luar
+        return newConnection;
     };
 
     try {
-        await resetConnection();
+        await resetConnection(); // Panggilan awal untuk mengisi client dan address
         const shortAddress = getShortAddress(address);
         addLog(`Wallet berhasil dimuat: ${shortAddress}`, "success");
         reportSummary.push(`- Wallet: *${shortAddress}*`);
 
+        // Kirim client, address, dan fungsi reset ke runCycle
         await runCycle(client, address, resetConnection, reportSummary);
 
         addLog("✅ Semua tugas telah selesai. Bot akan berhenti.", "success");
-        reportSummary.push("\n*Status Akhir: Berhasil* 👍");
+        // Cek jika ada error di laporan sebelum menyatakan berhasil
+        const hasFailedTasks = reportSummary.some(msg => msg.startsWith('❌'));
+        if (hasFailedTasks) {
+            reportSummary.push("\n*Status Akhir: Selesai dengan beberapa kegagalan* ⚠️");
+        } else {
+            reportSummary.push("\n*Status Akhir: Berhasil* 👍");
+        }
         await sendTelegramReport(reportSummary);
         process.exit(0);
     } catch (error) {
